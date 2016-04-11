@@ -29,6 +29,7 @@ import org.apache.spark.rpc.RpcEndpointRef
 import org.apache.spark.util.{ShutdownHookManager, Utils}
 import org.apache.spark.util.logging.FileAppender
 import org.apache.spark.{Logging, SecurityManager, SparkConf}
+import org.apache.spark.launcher.ThreadProcessStarter
 
 /**
  * Manages the execution of one executor process.
@@ -142,41 +143,63 @@ private[deploy] class ExecutorRunner(
       // Launch the process
       val builder = CommandUtils.buildProcessBuilder(appDesc.command, new SecurityManager(conf),
         memory, sparkHome.getAbsolutePath, substituteVariables)
-      val command = builder.command()
-      val formattedCommand = command.asScala.mkString("\"", "\" \"", "\"")
-      logInfo(s"Launch command: $formattedCommand")
+          if(builder.environment.get("IS_UNI_KERNEL") == null)
+          {
+              val command = builder.command()
+              val formattedCommand = command.asScala.mkString("\"", "\" \"", "\"")
+              logInfo(s"Launch command: $formattedCommand")
+              
+              builder.directory(executorDir)
+              builder.environment.put("SPARK_EXECUTOR_DIRS", appLocalDirs.mkString(File.pathSeparator))
+              // In case we are running this from within the Spark Shell, avoid creating a "scala"
+              // parent process for the executor command
+              builder.environment.put("SPARK_LAUNCH_WITH_SCALA", "0")
+              // Add webUI log urls
+              val baseUrl =
+              s"http://$publicAddress:$webUiPort/logPage/?appId=$appId&executorId=$execId&logType="
+              builder.environment.put("SPARK_LOG_URL_STDERR", s"${baseUrl}stderr")
+              builder.environment.put("SPARK_LOG_URL_STDOUT", s"${baseUrl}stdout")
 
-      builder.directory(executorDir)
-      builder.environment.put("SPARK_EXECUTOR_DIRS", appLocalDirs.mkString(File.pathSeparator))
-      // In case we are running this from within the Spark Shell, avoid creating a "scala"
-      // parent process for the executor command
-      builder.environment.put("SPARK_LAUNCH_WITH_SCALA", "0")
+              process = builder.start()
+              val header = "Spark Executor Command: %s\n%s\n\n".format(
+                      formattedCommand, "=" * 40)
 
-      // Add webUI log urls
-      val baseUrl =
-        s"http://$publicAddress:$webUiPort/logPage/?appId=$appId&executorId=$execId&logType="
-      builder.environment.put("SPARK_LOG_URL_STDERR", s"${baseUrl}stderr")
-      builder.environment.put("SPARK_LOG_URL_STDOUT", s"${baseUrl}stdout")
+              // Redirect its stdout and stderr to files
+              val stdout = new File(executorDir, "stdout")
+              stdoutAppender = FileAppender(process.getInputStream, stdout, conf)
 
-      process = builder.start()
-      val header = "Spark Executor Command: %s\n%s\n\n".format(
-        formattedCommand, "=" * 40)
+              val stderr = new File(executorDir, "stderr")
+              Files.write(header, stderr, UTF_8)
+              stderrAppender = FileAppender(process.getErrorStream, stderr, conf)
 
-      // Redirect its stdout and stderr to files
-      val stdout = new File(executorDir, "stdout")
-      stdoutAppender = FileAppender(process.getInputStream, stdout, conf)
-
-      val stderr = new File(executorDir, "stderr")
-      Files.write(header, stderr, UTF_8)
-      stderrAppender = FileAppender(process.getErrorStream, stderr, conf)
-
-      // Wait for it to exit; executor may exit with code 0 (when driver instructs it to shutdown)
-      // or with nonzero exit code
-      val exitCode = process.waitFor()
-      state = ExecutorState.EXITED
-      val message = "Command exited with code " + exitCode
-      worker.send(ExecutorStateChanged(appId, execId, state, Some(message), Some(exitCode)))
-    } catch {
+              // Wait for it to exit; executor may exit with code 0 (when driver instructs it to shutdown)
+              // or with nonzero exit code
+              val exitCode = process.waitFor()
+              state = ExecutorState.EXITED
+              val message = "Command exited with code " + exitCode
+              worker.send(ExecutorStateChanged(appId, execId, state, Some(message), Some(exitCode)))
+        }
+      else
+      {
+          //println("In Uni kernel")
+          var args = appDesc.command.arguments.map(substituteVariables)
+          //args = args :+ "--SPARK-EXECUTOR-DIRS"
+          //args = args :+ appLocalDirs.mkString(File.pathSeparator)
+          val exitCode = ThreadProcessStarter.start(appDesc.command.mainClass,
+          args.toArray,
+          appDesc.command.classPathEntries.
+          map(substituteVariables).toArray,
+          appDesc.command.libraryPathEntries.
+          map(substituteVariables).toArray,
+          appDesc.command.javaOpts.
+          map(substituteVariables).toArray);
+          //println("environment ____________")
+          //println(appDesc.command.environment)
+          state = ExecutorState.EXITED
+          val message = "Command exited with code " + exitCode
+          worker.send(ExecutorStateChanged(appId, execId, state, Some(message), Some(exitCode)))
+    }
+} catch {
       case interrupted: InterruptedException => {
         logInfo("Runner thread for executor " + fullId + " interrupted")
         state = ExecutorState.KILLED

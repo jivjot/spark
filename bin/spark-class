@@ -84,4 +84,5 @@ CMD=()
 while IFS= read -d '' -r ARG; do
   CMD+=("$ARG")
 done < <("$RUNNER" -cp "$LAUNCH_CLASSPATH" org.apache.spark.launcher.Main "$@")
+echo "${CMD[@]}"
 exec "${CMD[@]}"

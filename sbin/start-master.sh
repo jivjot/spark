@@ -63,7 +63,8 @@ if [ "$SPARK_MASTER_PORT" = "" ]; then
 fi
 
 if [ "$SPARK_MASTER_IP" = "" ]; then
-  SPARK_MASTER_IP=`hostname`
+  #SPARK_MASTER_IP=`hostname`
+  SPARK_MASTER_IP=0.0.0.0
 fi
 
 if [ "$SPARK_MASTER_WEBUI_PORT" = "" ]; then

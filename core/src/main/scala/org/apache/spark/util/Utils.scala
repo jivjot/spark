@@ -374,14 +374,14 @@ private[spark] object Utils extends Logging {
       // Only one executor entry.
       // The FileLock is only used to control synchronization for executors download file,
       // it's always safe regardless of lock type (mandatory or advisory).
-      val lock = lockFileChannel.lock()
+      //val lock = lockFileChannel.lock()
       val cachedFile = new File(localDir, cachedFileName)
       try {
         if (!cachedFile.exists()) {
           doFetchFile(url, localDir, cachedFileName, conf, securityMgr, hadoopConf)
         }
       } finally {
-        lock.release()
+        //lock.release()
         lockFileChannel.close()
       }
       copyFile(

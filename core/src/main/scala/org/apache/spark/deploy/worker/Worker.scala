@@ -38,6 +38,8 @@ import org.apache.spark.deploy.worker.ui.WorkerWebUI
 import org.apache.spark.metrics.MetricsSystem
 import org.apache.spark.rpc._
 import org.apache.spark.util.{ThreadUtils, SignalLogger, Utils}
+import org.apache.spark.launcher.SparkSecurityManager
+
 
 private[deploy] class Worker(
     override val rpcEnv: RpcEnv,
@@ -687,6 +689,7 @@ private[deploy] object Worker extends Logging {
 
   def main(argStrings: Array[String]) {
     SignalLogger.register(log)
+    System.setSecurityManager(new SparkSecurityManager);//@@@@
     val conf = new SparkConf
     val args = new WorkerArguments(argStrings, conf)
     val rpcEnv = startRpcEnvAndEndpoint(args.host, args.port, args.webUiPort, args.cores,
