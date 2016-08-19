@@ -166,7 +166,7 @@ class GaussianMixture private (
     val sc = data.sparkContext
 
     // we will operate on the data as breeze data
-    val breezeData = data.map(_.toBreeze).cache()
+    val breezeData = data.map(_.asBreeze).cache()
 
     // Get length of the input vectors
     val d = breezeData.first().length
@@ -181,13 +181,12 @@ class GaussianMixture private (
     val (weights, gaussians) = initialModel match {
       case Some(gmm) => (gmm.weights, gmm.gaussians)
 
-      case None => {
+      case None =>
         val samples = breezeData.takeSample(withReplacement = true, k * nSamples, seed)
         (Array.fill(k)(1.0 / k), Array.tabulate(k) { i =>
           val slice = samples.view(i * nSamples, (i + 1) * nSamples)
           new MultivariateGaussian(vectorMean(slice), initCovariance(slice))
         })
-      }
     }
 
     var llh = Double.MinValue // current log-likelihood
@@ -199,7 +198,7 @@ class GaussianMixture private (
       val compute = sc.broadcast(ExpectationSum.add(weights, gaussians)_)
 
       // aggregate the cluster contribution for all sample points
-      val sums = breezeData.aggregate(ExpectationSum.zero(k, d))(compute.value, _ += _)
+      val sums = breezeData.treeAggregate(ExpectationSum.zero(k, d))(compute.value, _ += _)
 
       // Create new distributions based on the partial assignments
       // (often referred to as the "M" step in literature)
@@ -228,6 +227,7 @@ class GaussianMixture private (
       llhp = llh // current becomes previous
       llh = sums.logLikelihood // this is the freshly computed log-likelihood
       iter += 1
+      compute.destroy(blocking = false)
     }
 
     new GaussianMixtureModel(weights, gaussians)

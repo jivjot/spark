@@ -89,4 +89,29 @@ package object config {
     .stringConf
     .toSequence
     .createWithDefault(Nil)
+
+  // Note: This is a SQL config but needs to be in core because the REPL depends on it
+  private[spark] val CATALOG_IMPLEMENTATION = ConfigBuilder("spark.sql.catalogImplementation")
+    .internal()
+    .stringConf
+    .checkValues(Set("hive", "in-memory"))
+    .createWithDefault("in-memory")
+
+  private[spark] val LISTENER_BUS_EVENT_QUEUE_SIZE =
+    ConfigBuilder("spark.scheduler.listenerbus.eventqueue.size")
+      .intConf
+      .createWithDefault(10000)
+
+  // This property sets the root namespace for metrics reporting
+  private[spark] val METRICS_NAMESPACE = ConfigBuilder("spark.metrics.namespace")
+    .stringConf
+    .createOptional
+
+  private[spark] val PYSPARK_DRIVER_PYTHON = ConfigBuilder("spark.pyspark.driver.python")
+    .stringConf
+    .createOptional
+
+  private[spark] val PYSPARK_PYTHON = ConfigBuilder("spark.pyspark.python")
+    .stringConf
+    .createOptional
 }

@@ -79,13 +79,15 @@ class ConstraintPropagationSuite extends SparkFunSuite {
     assert(tr.analyze.constraints.isEmpty)
 
     val aliasedRelation = tr.where('c.attr > 10 && 'a.attr < 5)
-      .groupBy('a, 'c, 'b)('a, 'c.as("c1"), count('a).as("a3")).select('c1, 'a).analyze
+      .groupBy('a, 'c, 'b)('a, 'c.as("c1"), count('a).as("a3")).select('c1, 'a, 'a3).analyze
 
+    // SPARK-16644: aggregate expression count(a) should not appear in the constraints.
     verifyConstraints(aliasedRelation.analyze.constraints,
       ExpressionSet(Seq(resolveColumn(aliasedRelation.analyze, "c1") > 10,
         IsNotNull(resolveColumn(aliasedRelation.analyze, "c1")),
         resolveColumn(aliasedRelation.analyze, "a") < 5,
-        IsNotNull(resolveColumn(aliasedRelation.analyze, "a")))))
+        IsNotNull(resolveColumn(aliasedRelation.analyze, "a")),
+        IsNotNull(resolveColumn(aliasedRelation.analyze, "a3")))))
   }
 
   test("propagating constraints in expand") {
@@ -148,6 +150,20 @@ class ConstraintPropagationSuite extends SparkFunSuite {
       .analyze.constraints,
       ExpressionSet(Seq(resolveColumn(tr1, "a") > 10,
         IsNotNull(resolveColumn(tr1, "a")))))
+
+    val a = resolveColumn(tr1, "a")
+    verifyConstraints(tr1
+      .where('a.attr > 10)
+      .union(tr2.where('d.attr > 11))
+      .analyze.constraints,
+      ExpressionSet(Seq(a > 10 || a > 11, IsNotNull(a))))
+
+    val b = resolveColumn(tr1, "b")
+    verifyConstraints(tr1
+      .where('a.attr > 10 && 'b.attr < 10)
+      .union(tr2.where('d.attr > 11 && 'e.attr < 11))
+      .analyze.constraints,
+      ExpressionSet(Seq(a > 10 || a > 11, b < 10 || b < 11, IsNotNull(a), IsNotNull(b))))
   }
 
   test("propagating constraints in intersect") {
@@ -284,7 +300,7 @@ class ConstraintPropagationSuite extends SparkFunSuite {
         Cast(resolveColumn(tr, "a"), LongType) * resolveColumn(tr, "b") + Cast(100, LongType) ===
           Cast(resolveColumn(tr, "c"), LongType),
         Cast(resolveColumn(tr, "d"), DoubleType) /
-          Cast(Cast(10, LongType), DoubleType) ===
+          Cast(10, DoubleType) ===
             Cast(resolveColumn(tr, "e"), DoubleType),
         IsNotNull(resolveColumn(tr, "a")),
         IsNotNull(resolveColumn(tr, "b")),
@@ -298,7 +314,7 @@ class ConstraintPropagationSuite extends SparkFunSuite {
         Cast(resolveColumn(tr, "a"), LongType) * resolveColumn(tr, "b") - Cast(10, LongType) >=
           Cast(resolveColumn(tr, "c"), LongType),
         Cast(resolveColumn(tr, "d"), DoubleType) /
-          Cast(Cast(10, LongType), DoubleType) <
+          Cast(10, DoubleType) <
             Cast(resolveColumn(tr, "e"), DoubleType),
         IsNotNull(resolveColumn(tr, "a")),
         IsNotNull(resolveColumn(tr, "b")),

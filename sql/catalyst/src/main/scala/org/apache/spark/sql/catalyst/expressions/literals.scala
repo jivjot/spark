@@ -19,6 +19,7 @@ package org.apache.spark.sql.catalyst.expressions
 
 import java.nio.charset.StandardCharsets
 import java.sql.{Date, Timestamp}
+import java.util.Objects
 
 import org.json4s.JsonAST._
 
@@ -60,7 +61,8 @@ object Literal {
    * Constructs a [[Literal]] of [[ObjectType]], for example when you need to pass an object
    * into code generation.
    */
-  def fromObject(obj: AnyRef): Literal = new Literal(obj, ObjectType(obj.getClass))
+  def fromObject(obj: Any, objType: DataType): Literal = new Literal(obj, objType)
+  def fromObject(obj: Any): Literal = new Literal(obj, ObjectType(obj.getClass))
 
   def fromJSON(json: JValue): Literal = {
     val dataType = DataType.parseDataType(json \ "dataType")
@@ -161,13 +163,14 @@ object DecimalLiteral {
 /**
  * In order to do type checking, use Literal.create() instead of constructor
  */
-case class Literal protected (value: Any, dataType: DataType)
-  extends LeafExpression with CodegenFallback {
+case class Literal (value: Any, dataType: DataType) extends LeafExpression with CodegenFallback {
 
   override def foldable: Boolean = true
   override def nullable: Boolean = value == null
 
   override def toString: String = if (value != null) value.toString else "null"
+
+  override def hashCode(): Int = 31 * (31 * Objects.hashCode(dataType)) + Objects.hashCode(value)
 
   override def equals(other: Any): Boolean = other match {
     case o: Literal =>
@@ -178,7 +181,7 @@ case class Literal protected (value: Any, dataType: DataType)
 
   override protected def jsonFields: List[JField] = {
     // Turns all kinds of literal values to string in json field, as the type info is hard to
-    // retain in json format, e.g. {"a": 123} can be a int, or double, or decimal, etc.
+    // retain in json format, e.g. {"a": 123} can be an int, or double, or decimal, etc.
     val jsonValue = (value, dataType) match {
       case (null, _) => JNull
       case (i: Int, DateType) => JString(DateTimeUtils.toJavaDate(i).toString)
@@ -190,50 +193,50 @@ case class Literal protected (value: Any, dataType: DataType)
 
   override def eval(input: InternalRow): Any = value
 
-  override def genCode(ctx: CodegenContext, ev: ExprCode): String = {
+  override def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
     // change the isNull and primitive to consts, to inline them
     if (value == null) {
       ev.isNull = "true"
-      s"final ${ctx.javaType(dataType)} ${ev.value} = ${ctx.defaultValue(dataType)};"
+      ev.copy(s"final ${ctx.javaType(dataType)} ${ev.value} = ${ctx.defaultValue(dataType)};")
     } else {
       dataType match {
         case BooleanType =>
           ev.isNull = "false"
           ev.value = value.toString
-          ""
+          ev.copy("")
         case FloatType =>
           val v = value.asInstanceOf[Float]
           if (v.isNaN || v.isInfinite) {
-            super[CodegenFallback].genCode(ctx, ev)
+            super[CodegenFallback].doGenCode(ctx, ev)
           } else {
             ev.isNull = "false"
             ev.value = s"${value}f"
-            ""
+            ev.copy("")
           }
         case DoubleType =>
           val v = value.asInstanceOf[Double]
           if (v.isNaN || v.isInfinite) {
-            super[CodegenFallback].genCode(ctx, ev)
+            super[CodegenFallback].doGenCode(ctx, ev)
           } else {
             ev.isNull = "false"
             ev.value = s"${value}D"
-            ""
+            ev.copy("")
           }
         case ByteType | ShortType =>
           ev.isNull = "false"
           ev.value = s"(${ctx.javaType(dataType)})$value"
-          ""
+          ev.copy("")
         case IntegerType | DateType =>
           ev.isNull = "false"
           ev.value = value.toString
-          ""
+          ev.copy("")
         case TimestampType | LongType =>
           ev.isNull = "false"
           ev.value = s"${value}L"
-          ""
+          ev.copy("")
         // eval() version may be faster for non-primitive types
         case other =>
-          super[CodegenFallback].genCode(ctx, ev)
+          super[CodegenFallback].doGenCode(ctx, ev)
       }
     }
   }

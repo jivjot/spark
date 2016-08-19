@@ -22,6 +22,8 @@ import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
 import scala.collection.JavaConverters._
 import scala.util.Failure
 
+import org.apache.commons.lang3.SerializationUtils
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.{PairRDDFunctions, RDD}
 import org.apache.spark.streaming._
@@ -214,7 +216,9 @@ class JobScheduler(val ssc: StreamingContext) extends Logging {
     import JobScheduler._
 
     def run() {
+      val oldProps = ssc.sparkContext.getLocalProperties
       try {
+        ssc.sparkContext.setLocalProperties(SerializationUtils.clone(ssc.savedProperties.get()))
         val formattedTime = UIUtils.formatBatchTime(
           job.time.milliseconds, ssc.graph.batchDuration.milliseconds, showYYYYMMSS = false)
         val batchUrl = s"/streaming/batch/?id=${job.time.milliseconds}"
@@ -248,8 +252,7 @@ class JobScheduler(val ssc: StreamingContext) extends Logging {
           // JobScheduler has been stopped.
         }
       } finally {
-        ssc.sc.setLocalProperty(JobScheduler.BATCH_TIME_PROPERTY_KEY, null)
-        ssc.sc.setLocalProperty(JobScheduler.OUTPUT_OP_ID_PROPERTY_KEY, null)
+        ssc.sparkContext.setLocalProperties(oldProps)
       }
     }
   }

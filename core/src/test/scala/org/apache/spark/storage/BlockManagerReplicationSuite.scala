@@ -27,24 +27,29 @@ import org.scalatest.{BeforeAndAfter, Matchers}
 import org.scalatest.concurrent.Eventually._
 
 import org.apache.spark._
+import org.apache.spark.broadcast.BroadcastManager
 import org.apache.spark.memory.UnifiedMemoryManager
 import org.apache.spark.network.BlockTransferService
 import org.apache.spark.network.netty.NettyBlockTransferService
 import org.apache.spark.rpc.RpcEnv
 import org.apache.spark.scheduler.LiveListenerBus
 import org.apache.spark.serializer.{KryoSerializer, SerializerManager}
-import org.apache.spark.shuffle.hash.HashShuffleManager
+import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.storage.StorageLevel._
 
 /** Testsuite that tests block replication in BlockManager */
-class BlockManagerReplicationSuite extends SparkFunSuite with Matchers with BeforeAndAfter {
+class BlockManagerReplicationSuite extends SparkFunSuite
+    with Matchers
+    with BeforeAndAfter
+    with LocalSparkContext {
 
   private val conf = new SparkConf(false).set("spark.app.id", "test")
   private var rpcEnv: RpcEnv = null
   private var master: BlockManagerMaster = null
   private val securityMgr = new SecurityManager(conf)
-  private val mapOutputTracker = new MapOutputTrackerMaster(conf)
-  private val shuffleManager = new HashShuffleManager(conf)
+  private val bcastManager = new BroadcastManager(true, conf, securityMgr)
+  private val mapOutputTracker = new MapOutputTrackerMaster(conf, bcastManager, true)
+  private val shuffleManager = new SortShuffleManager(conf)
 
   // List of block manager created during an unit test, so that all of the them can be stopped
   // after the unit test.
@@ -89,8 +94,10 @@ class BlockManagerReplicationSuite extends SparkFunSuite with Matchers with Befo
     // to make cached peers refresh frequently
     conf.set("spark.storage.cachedPeersTtl", "10")
 
+    sc = new SparkContext("local", "test", conf)
     master = new BlockManagerMaster(rpcEnv.setupEndpoint("blockmanager",
-      new BlockManagerMasterEndpoint(rpcEnv, true, conf, new LiveListenerBus)), conf, true)
+      new BlockManagerMasterEndpoint(rpcEnv, true, conf,
+        new LiveListenerBus(sc))), conf, true)
     allStores.clear()
   }
 

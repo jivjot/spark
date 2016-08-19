@@ -125,8 +125,20 @@ private[spark] abstract class YarnSchedulerBackend(
    * This includes executors already pending or running.
    */
   override def doRequestTotalExecutors(requestedTotal: Int): Boolean = {
-    yarnSchedulerEndpointRef.askWithRetry[Boolean](
-      RequestExecutors(requestedTotal, localityAwareTasks, hostToLocalTaskCount))
+    val r = RequestExecutors(requestedTotal, localityAwareTasks, hostToLocalTaskCount)
+    yarnSchedulerEndpoint.amEndpoint match {
+      case Some(am) =>
+        try {
+          am.askWithRetry[Boolean](r)
+        } catch {
+          case NonFatal(e) =>
+            logError(s"Sending $r to AM was unsuccessful", e)
+            return false
+        }
+      case None =>
+        logWarning("Attempted to request executors before the AM has registered!")
+        return false
+    }
   }
 
   /**
@@ -209,7 +221,7 @@ private[spark] abstract class YarnSchedulerBackend(
    */
   private class YarnSchedulerEndpoint(override val rpcEnv: RpcEnv)
     extends ThreadSafeRpcEndpoint with Logging {
-    private var amEndpoint: Option[RpcEndpointRef] = None
+    var amEndpoint: Option[RpcEndpointRef] = None
 
     private val askAmThreadPool =
       ThreadUtils.newDaemonCachedThreadPool("yarn-scheduler-ask-am-thread-pool")
@@ -223,17 +235,15 @@ private[spark] abstract class YarnSchedulerBackend(
           val lossReasonRequest = GetExecutorLossReason(executorId)
           val future = am.ask[ExecutorLossReason](lossReasonRequest, askTimeout)
           future onSuccess {
-            case reason: ExecutorLossReason => {
+            case reason: ExecutorLossReason =>
               driverEndpoint.askWithRetry[Boolean](RemoveExecutor(executorId, reason))
-            }
           }
           future onFailure {
-            case NonFatal(e) => {
+            case NonFatal(e) =>
               logWarning(s"Attempted to get executor loss reason" +
                 s" for executor id ${executorId} at RPC address ${executorRpcAddress}," +
                 s" but got no response. Marking as slave lost.", e)
               driverEndpoint.askWithRetry[Boolean](RemoveExecutor(executorId, SlaveLost()))
-            }
             case t => throw t
           }
         case None =>
